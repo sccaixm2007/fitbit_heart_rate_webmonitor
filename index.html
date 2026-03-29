@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fitbit Smart HR Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+  <link rel="stylesheet" href="src/style.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════
+     LOGIN
+═══════════════════════════════════════ -->
+<div id="loginScreen">
+  <div class="login-card">
+    <span class="login-icon">💗</span>
+    <h1>Smart HR Monitor</h1>
+    <p>Activity-aware heart rate monitoring with sedentary reminders and sound alerts.</p>
+    <!-- Shown when redirected here because of token expiry -->
+    <div id="loginExpiredMsg">
+      ⚠️ Your session has expired. Please reconnect Fitbit to continue.
+    </div>
+    <div id="loginError"></div>
+    <div class="input-group">
+      <label for="clientIdInput">Fitbit App Client ID</label>
+      <input type="text" id="clientIdInput" placeholder="e.g. 23ABCDE" autocomplete="off" />
+    </div>
+    <button class="btn-primary" onclick="login()">🔗 Connect Fitbit</button>
+    <div class="help-section">
+      <p><strong>Setup:</strong></p>
+      <p>1. <a href="https://dev.fitbit.com/apps/new" target="_blank">dev.fitbit.com/apps/new</a> → App type: <code>Personal</code></p>
+      <p>2. OAuth 2.0 type: <code>Client</code> · Callback: <code>http://127.0.0.1:5500/</code></p>
+      <p>3. Scopes: <code>heartrate</code> <code>activity</code> (both required)</p>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     DASHBOARD
+═══════════════════════════════════════ -->
+<div id="dashboard">
+
+  <!-- Header -->
+  <div class="dash-header">
+    <div class="dash-title">💗 Smart HR Monitor</div>
+    <div class="header-right">
+      <div class="live-dot"></div>
+      <span class="connected-txt">Connected</span>
+      <!-- Token expiry countdown -->
+      <span id="tokenInfo"></span>
+      <!-- Sound toggle button -->
+      <button id="soundBtn" class="btn-outline" onclick="toggleSound()" title="Toggle sound alerts">🔔 Sound</button>
+      <button class="btn-outline" onclick="logout()">Disconnect</button>
+    </div>
+  </div>
+
+  <!-- Session-expired banner (visible when 401 occurs while on the dashboard) -->
+  <div id="expiredBanner">
+    <span class="expired-msg">🔑 Session expired — data cannot be fetched until you reconnect.</span>
+    <button onclick="autoReconnect()">🔗 Reconnect Fitbit</button>
+  </div>
+
+  <!-- Notification permission banner -->
+  <div id="notifBanner">
+    <span>Enable browser notifications to receive heart-rate &amp; sedentary alerts.</span>
+    <button onclick="enableNotifications()">Enable</button>
+  </div>
+
+  <!-- ── View switcher ─────────────────────────────────────── -->
+  <div class="view-tabs">
+    <button class="view-btn active" onclick="switchView('realtime')">⚡ Realtime</button>
+    <button class="view-btn"        onclick="switchView('today')">📈 Today's Trend</button>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       VIEW: REALTIME  (existing dashboard content)
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="viewRealtime">
+
+  <!-- Row 1: HR card + Activity State card -->
+  <div class="grid-top">
+
+    <!-- Heart Rate -->
+    <div class="card hr-card" id="hrCard">
+      <div class="card-label">Current Heart Rate</div>
+      <div class="hr-number" id="hrNumber">--</div>
+      <div class="hr-unit">BPM</div>
+      <span class="hr-badge badge-normal" id="hrBadge">Waiting…</span>
+      <div class="hr-updated" id="hrUpdated">—</div>
+    </div>
+
+    <!-- Activity State + Sitting Timer -->
+    <div class="card state-card is-resting" id="stateCard">
+      <div class="card-label">Activity State</div>
+      <div class="state-icon" id="stateIcon">🪑</div>
+      <div class="state-name resting" id="stateName">Resting</div>
+      <div class="state-steps-info" id="stateInfo">Calculating…</div>
+
+      <!-- Steps → walking threshold bar -->
+      <div class="steps-bar-wrap">
+        <div class="steps-bar-label">
+          <span>Steps / 5 min</span>
+          <span id="stepsCountLabel">0 / 20</span>
+        </div>
+        <div class="bar-bg"><div class="bar-fill steps-bar-fill" id="stepsBarFill" style="width:0%"></div></div>
+      </div>
+
+      <!-- ── Sitting Duration Timer ── -->
+      <div id="sittingTimer">
+        <div class="sitting-row">
+          <span class="sitting-label">Sitting Duration</span>
+        </div>
+        <div class="sitting-duration" id="sittingDuration">0 min</div>
+        <div class="sitting-bar-bg">
+          <div class="sitting-bar-fill" id="sittingBarFill" style="width:0%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 2: Alert status -->
+  <div class="card alert-card">
+    <div class="card-label">Alert Status</div>
+    <div class="alert-top">
+      <div class="alert-dot" id="alertDot"></div>
+      <div>
+        <div class="alert-main" id="alertMain">All clear</div>
+        <div class="alert-sub"  id="alertSub">No alerts active</div>
+      </div>
+    </div>
+    <div class="alert-mode-tag tag-resting" id="alertModeTag">🪑 Resting rules active</div>
+
+    <!-- Resting HR bars -->
+    <div class="dur-bars" id="restingBars">
+      <div class="dur-row">
+        <div class="dur-meta"><span id="ruleHighLabel">HR &gt;110 BPM</span><span id="ruleHighTime">0:00 / 3:00</span></div>
+        <div class="bar-bg"><div class="bar-fill bar-high"   id="barHigh" style="width:0%"></div></div>
+      </div>
+      <div class="dur-row">
+        <div class="dur-meta"><span id="ruleMedLabel">HR &gt;105 BPM</span><span id="ruleMedTime">0:00 / 5:00</span></div>
+        <div class="bar-bg"><div class="bar-fill bar-medium" id="barMed"  style="width:0%"></div></div>
+      </div>
+    </div>
+
+    <!-- Walking HR bar -->
+    <div class="dur-bars" id="walkingBars" style="display:none">
+      <div class="dur-row">
+        <div class="dur-meta"><span id="ruleWalkLabel">HR &gt;125 BPM</span><span id="ruleWalkTime">0:00 / 1:00</span></div>
+        <div class="bar-bg"><div class="bar-fill bar-walk" id="barWalk" style="width:0%"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 3: Chart -->
+  <div class="card chart-card">
+    <div class="chart-head">
+      <div class="chart-title">Heart Rate &amp; Steps — last ~20 min</div>
+      <div class="chart-legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#ff4f6d"></div><span>HR (BPM)</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:rgba(68,138,255,0.5)"></div><span>Steps/min</span></div>
+        <div class="legend-item"><div class="legend-line" style="background:rgba(244,67,54,0.6)"></div><span id="chartThreshLabel">Threshold</span></div>
+      </div>
+    </div>
+    <div class="zoom-overlay">
+      <span class="zoom-range-info" id="hrZoomInfo"></span>
+      <span class="zoom-hint">Scroll to zoom · Drag to pan</span>
+      <button class="btn-reset-zoom" id="hrResetZoom" onclick="resetZoom('hr')">Reset Zoom</button>
+    </div>
+    <div class="chart-wrap"><canvas id="hrChart"></canvas></div>
+  </div>
+
+  <!-- Row 4: Settings -->
+  <div class="card settings-card">
+    <h3>⚙️ Settings</h3>
+    <div class="settings-tabs">
+      <button class="tab-btn active" onclick="switchSettingsTab('resting')">🪑 Resting HR</button>
+      <button class="tab-btn"        onclick="switchSettingsTab('walking')">🚶 Walking HR</button>
+      <button class="tab-btn"        onclick="switchSettingsTab('sedentary')">⏰ Sedentary</button>
+    </div>
+
+    <!-- Resting tab -->
+    <div class="tab-panel active" id="tabResting">
+      <div class="settings-grid">
+        <div class="setting-item">
+          <label>High Alert</label>
+          <div class="setting-row">
+            <span>HR &gt;</span><input type="number" id="rHighThresh" value="110" min="60" max="220" />
+            <span>BPM for</span><input type="number" id="rHighDur" value="3" min="1" max="60" /><span>min</span>
+          </div>
+        </div>
+        <div class="setting-item">
+          <label>Medium Alert</label>
+          <div class="setting-row">
+            <span>HR &gt;</span><input type="number" id="rMedThresh" value="105" min="60" max="220" />
+            <span>BPM for</span><input type="number" id="rMedDur" value="5" min="1" max="60" /><span>min</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Walking tab -->
+    <div class="tab-panel" id="tabWalking">
+      <div class="settings-grid">
+        <div class="setting-item full-col">
+          <label>Walking Alert</label>
+          <div class="setting-row">
+            <span>HR &gt;</span><input type="number" id="wHighThresh" value="125" min="60" max="220" />
+            <span>BPM for</span><input type="number" id="wHighDur" value="1" min="1" max="60" /><span>min</span>
+          </div>
+        </div>
+        <div class="setting-item">
+          <label>Walking Detection</label>
+          <div class="setting-row">
+            <span>Steps in 5 min &gt;</span><input type="number" id="walkStepThresh" value="20" min="1" max="500" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sedentary tab -->
+    <div class="tab-panel" id="tabSedentary">
+      <!-- Sound toggle -->
+      <div class="sound-toggle-row">
+        <label>🔔 Sound alerts (beep on HR &amp; sedentary alerts)</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="soundToggle" checked onchange="onSoundToggleChange()" />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="settings-grid">
+        <div class="setting-item">
+          <label>Sedentary Reminder</label>
+          <div class="setting-row">
+            <span>Sitting for &gt;</span>
+            <input type="number" id="setSittingMin" value="45" min="5" max="240" />
+            <span>min → alert</span>
+          </div>
+        </div>
+        <div class="setting-item">
+          <label>Reminder Cooldown</label>
+          <div class="setting-row">
+            <span>Don't repeat for</span>
+            <input type="number" id="setSittingCooldownMin" value="15" min="1" max="120" />
+            <span>min</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <button class="btn-apply" onclick="applySettings()">Apply Settings</button>
+  </div>
+
+  </div><!-- /viewRealtime -->
+
+
+  <!-- ══════════════════════════════════════════════════════════
+       VIEW: TODAY'S TREND  (full-day heart rate chart)
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="viewToday" style="display:none">
+
+    <!-- Summary stats strip -->
+    <div class="today-stats-row" style="grid-template-columns:repeat(5,1fr)">
+      <div class="card today-stat">
+        <div class="card-label">Avg BPM</div>
+        <div class="today-stat-value" id="todayAvgBpm" style="color:var(--blue)">--</div>
+      </div>
+      <div class="card today-stat">
+        <div class="card-label">Max BPM</div>
+        <div class="today-stat-value" id="todayMaxBpm" style="color:var(--red)">--</div>
+      </div>
+      <div class="card today-stat">
+        <div class="card-label">Min BPM</div>
+        <div class="today-stat-value" id="todayMinBpm" style="color:var(--green)">--</div>
+      </div>
+      <div class="card today-stat">
+        <div class="card-label">Total Steps</div>
+        <div class="today-stat-value" id="todayTotalSteps" style="color:var(--teal);font-size:1.6rem">--</div>
+      </div>
+      <div class="card today-stat">
+        <div class="card-label">Data Points</div>
+        <div class="today-stat-value" id="todayPts" style="color:var(--muted)">--</div>
+      </div>
+    </div>
+
+    <!-- Full-day chart -->
+    <div class="card chart-card">
+      <div class="chart-head">
+        <div class="chart-title">Today's Heart Rate &amp; Steps — 00:00 → Now</div>
+        <div class="chart-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:#ff4f6d"></div><span>HR (BPM)</span></div>
+          <div class="legend-item"><div class="legend-dot" style="background:rgba(68,138,255,0.5)"></div><span>Steps/min</span></div>
+          <div class="legend-item"><div class="legend-line" style="background:rgba(244,67,54,0.6)"></div><span>Alert Threshold</span></div>
+        </div>
+      </div>
+      <div class="zoom-overlay">
+        <span class="zoom-range-info" id="todayZoomInfo"></span>
+        <span class="zoom-hint">Scroll to zoom · Drag to pan</span>
+        <button class="btn-reset-zoom" id="todayResetZoom" onclick="resetZoom('today')">Reset Zoom</button>
+      </div>
+      <div class="chart-wrap" style="height:300px"><canvas id="todayChart"></canvas></div>
+      <div style="font-size:0.78rem;color:var(--muted);margin-top:0.7rem;
+                  display:flex;justify-content:space-between;flex-wrap:wrap;gap:0.5rem">
+        <span id="todayLastLoad">—</span>
+        <span id="todayLoadingTxt" style="color:var(--accent)"></span>
+      </div>
+    </div>
+
+
+  </div><!-- /viewToday -->
+
+
+</div><!-- /dashboard -->
+<div id="toast"></div>
+
+<script src="config.js"></script>
+<script src="src/app.js"></script>
+</body>
+</html>

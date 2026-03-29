@@ -1,0 +1,28 @@
+# ── Local configuration (contains your personal redirect URI) ──
+config.js
+
+# ── OS generated files ──
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# ── Editor / IDE ──
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Logs ──
+*.log
+npm-debug.log*
+
+# ── Node (if you ever add a build step) ──
+node_modules/
+dist/
+.npm
