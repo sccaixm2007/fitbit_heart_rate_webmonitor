@@ -1,7 +1,88 @@
-# ── Local configuration (contains your personal redirect URI) ──
+# ── Project-specific ──────────────────────────────────────────
+# Local config (contains your redirect URI — never commit this)
 config.js
 
-# ── OS generated files ──
+# ── Logs ──────────────────────────────────────────────────────
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Diagnostic reports (https://nodejs.org/api/report.html)
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+lib-cov
+coverage
+*.lcov
+.nyc_output
+
+# Build tools
+.grunt
+bower_components
+.lock-wscript
+build/Release
+
+# Dependency directories
+node_modules/
+jspm_packages/
+web_modules/
+
+# Cache / build output
+*.tsbuildinfo
+.npm
+.eslintcache
+.stylelintcache
+.node_repl_history
+*.tgz
+.yarn-integrity
+.cache
+.parcel-cache
+.next
+out
+.nuxt
+dist
+.cache/
+.vuepress/dist
+.temp
+.svelte-kit/
+**/.vitepress/dist
+**/.vitepress/cache
+.docusaurus
+.serverless/
+.fusebox/
+.dynamodb/
+.firebase/
+.tern-port
+.vscode-test
+
+# dotenv files (use config.js instead for this project)
+.env
+.env.*
+!.env.example
+
+# Yarn v3
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# ── OS generated ───────────────────────────────────────────────
 .DS_Store
 .DS_Store?
 ._*
@@ -11,18 +92,8 @@ Thumbs.db
 ehthumbs.db
 desktop.ini
 
-# ── Editor / IDE ──
-.vscode/settings.json
+# ── Editor ────────────────────────────────────────────────────
 .idea/
 *.swp
 *.swo
 *~
-
-# ── Logs ──
-*.log
-npm-debug.log*
-
-# ── Node (if you ever add a build step) ──
-node_modules/
-dist/
-.npm
