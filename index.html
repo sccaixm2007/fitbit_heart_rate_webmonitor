@@ -74,6 +74,7 @@
   <div class="view-tabs">
     <button class="view-btn active" onclick="switchView('realtime')">⚡ Realtime</button>
     <button class="view-btn"        onclick="switchView('today')">📈 Today's Trend</button>
+    <button class="view-btn"        onclick="switchView('ai')">🤖 AI 分析</button>
   </div>
 
   <!-- ══════════════════════════════════════════════════════════
@@ -311,6 +312,150 @@
 
 
   </div><!-- /viewToday -->
+
+
+  <!-- ══════════════════════════════════════════════════════════
+       VIEW: AI 分析
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="viewAi" style="display:none">
+
+    <!-- Data stats strip -->
+    <div class="ai-stats-grid">
+      <div class="card today-stat">
+        <div class="card-label">平均心率</div>
+        <div class="today-stat-value" id="aiStatAvg" style="color:var(--blue)">--</div>
+        <div class="ai-stat-unit">BPM</div>
+      </div>
+      <div class="card today-stat">
+        <div class="card-label">最大心率</div>
+        <div class="today-stat-value" id="aiStatMax" style="color:var(--red)">--</div>
+        <div class="ai-stat-unit">BPM</div>
+      </div>
+      <div class="card today-stat">
+        <div class="card-label">静息心率</div>
+        <div class="today-stat-value" id="aiStatRest" style="color:var(--green)">--</div>
+        <div class="ai-stat-unit">BPM</div>
+      </div>
+      <div class="card today-stat">
+        <div class="card-label">心率范围</div>
+        <div class="today-stat-value" id="aiStatRange" style="color:var(--purple)">--</div>
+        <div class="ai-stat-unit">BPM</div>
+      </div>
+      <div class="card today-stat">
+        <div class="card-label">步行均值</div>
+        <div class="today-stat-value" id="aiStatWorkout" style="color:var(--orange)">--</div>
+        <div class="ai-stat-unit">BPM</div>
+      </div>
+      <div class="card today-stat">
+        <div class="card-label">恢复 1 min</div>
+        <div class="today-stat-value" id="aiStatR1" style="color:var(--teal)">--</div>
+        <div class="ai-stat-unit">↓ BPM</div>
+      </div>
+      <div class="card today-stat">
+        <div class="card-label">恢复 2 min</div>
+        <div class="today-stat-value" id="aiStatR2" style="color:var(--teal)">--</div>
+        <div class="ai-stat-unit">↓ BPM</div>
+      </div>
+    </div>
+
+    <!-- User context (editable) -->
+    <div class="card ai-context-card">
+      <div class="card-label">用户背景（可编辑）</div>
+      <textarea id="aiUserContext" class="ai-context-area" rows="7">请在此填写您的个人背景，例如：
+
+年龄、近期状态（压力/睡眠等）
+
+baseline（供 AI 参考）：
+- 静息HR：xx BPM｜睡眠HR：xx BPM
+- 工作HR：xx BPM｜走路HR：xx BPM
+
+其他备注（如慢性病、用药等）</textarea>
+    </div>
+
+    <!-- Analyze button + status -->
+    <div class="ai-analyze-wrap">
+      <button id="aiAnalyzeBtn" class="btn-primary ai-analyze-btn" onclick="runAiAnalysis()">🤖 开始 AI 分析</button>
+      <div id="aiLoading" class="ai-loading" style="display:none">
+        <span class="ai-spinner"></span> 正在分析，请稍候…
+      </div>
+      <div id="aiError" class="ai-error" style="display:none"></div>
+    </div>
+
+    <!-- AI Result cards -->
+    <div id="aiResultSection" style="display:none">
+      <div class="ai-result-grid">
+
+        <!-- ① 今日状态 -->
+        <div class="card ai-result-card ai-card-status">
+          <div class="ai-result-label">① 今日状态</div>
+          <div class="ai-status-row">
+            <span id="aiResStatusIcon" class="ai-status-icon">—</span>
+            <span id="aiResStatus" class="ai-status-value">—</span>
+          </div>
+        </div>
+
+        <!-- ② 趋势判断 -->
+        <div class="card ai-result-card ai-card-trend">
+          <div class="ai-result-label">② 趋势判断</div>
+          <div class="ai-trend-row">
+            <span id="aiResTrendIcon" class="ai-trend-icon">—</span>
+            <span id="aiResTrend" class="ai-trend-value">—</span>
+          </div>
+        </div>
+
+        <!-- ③ 风险判断 -->
+        <div class="card ai-result-card">
+          <div class="ai-result-label">③ 风险判断</div>
+          <div id="aiResRisk" class="ai-result-text">—</div>
+        </div>
+
+        <!-- ④ 核心原因 -->
+        <div class="card ai-result-card">
+          <div class="ai-result-label">④ 核心原因</div>
+          <div id="aiResCoreIssue" class="ai-result-text">—</div>
+        </div>
+
+        <!-- ⑤ 明日建议 -->
+        <div class="card ai-result-card ai-card-wide">
+          <div class="ai-result-label">⑤ 明日建议</div>
+          <ul id="aiResSuggestions" class="ai-suggestions-list"></ul>
+        </div>
+
+        <!-- ⑥ 总结 -->
+        <div class="card ai-result-card ai-card-summary">
+          <div class="ai-result-label">⑥ 总结</div>
+          <div id="aiResSummary" class="ai-summary-text">—</div>
+        </div>
+
+      </div>
+
+      <!-- Daily history (3-day rolling) -->
+      <div class="card ai-history-card" id="aiHistoryCard" style="display:none">
+        <div class="ai-history-header">
+          <span class="ai-result-label" style="margin-bottom:0">近3日趋势记录</span>
+          <button class="ai-clear-btn" onclick="clearAllHistory()">清空记录</button>
+        </div>
+        <div id="aiHistoryList" class="ai-history-list" style="margin-top:0.75rem"></div>
+      </div>
+    </div>
+
+    <!-- Token cost tracker -->
+    <div class="ai-token-bar" id="aiTokenBar" style="display:none">
+      <span class="ai-token-item">
+        <span class="ai-token-label">本次</span>
+        <span id="aiTokenThisCall">—</span>
+      </span>
+      <span class="ai-token-sep">·</span>
+      <span class="ai-token-item">
+        <span class="ai-token-label">累计</span>
+        <span id="aiTokenTotal">—</span>
+      </span>
+      <span class="ai-token-sep">·</span>
+      <span class="ai-token-item ai-token-detail" id="aiTokenDetail">—</span>
+      <button class="ai-token-reset" onclick="resetTokenCost()" title="清零累计费用">↺ 清零</button>
+    </div>
+
+  </div><!-- /viewAi -->
 
 
 </div><!-- /dashboard -->

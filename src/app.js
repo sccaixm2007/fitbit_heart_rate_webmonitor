@@ -56,6 +56,7 @@ let prevState          = 'resting';    // previous cycle's state (for transition
 
 // Rate-limit backoff: pause polling until this timestamp
 let rateLimitedUntil   = 0;
+let recoveryTimer      = null;   // prevents multiple stacked recovery timeouts
 
 // Notifications
 let lastHRNotifTime    = 0;            // wall-clock ms of last HR browser notification
@@ -163,6 +164,8 @@ function login() {
 function logout() {
   accessToken = null; history = []; sittingStartTime = null;
   clearInterval(pollTimer); pollTimer = null;
+  if (recoveryTimer) { clearTimeout(recoveryTimer); recoveryTimer = null; }
+  rateLimitedUntil = 0;
   clearTokenStorage();
   logger.info('User logged out');
   showLogin();
@@ -197,6 +200,8 @@ function handleTokenExpired() {
   accessToken = null;
   clearInterval(pollTimer);
   pollTimer = null;
+  if (recoveryTimer) { clearTimeout(recoveryTimer); recoveryTimer = null; }
+  rateLimitedUntil = 0;
 
   // Show the red banner on the dashboard
   document.getElementById('expiredBanner').style.display = 'flex';
@@ -274,12 +279,20 @@ async function fetchDataset(url, dataKey) {
       // Update header status to show the countdown
       setRateLimitUI(retryAfter);
 
-      // Schedule a single recovery poll once the window expires
-      setTimeout(() => {
-        rateLimitedUntil = 0;
-        setRateLimitUI(0);  // restore "Connected" text
-        pollOnce();
-      }, retryAfter * 1000 + 500);
+      // Stop the regular setInterval so it doesn't race with the recovery call
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+
+      // Schedule ONE recovery that fully restarts polling after the window expires.
+      // Guard with recoveryTimer so multiple simultaneous 429s (e.g. HR + Steps via
+      // Promise.all) don't stack up duplicate recoveries.
+      if (!recoveryTimer) {
+        recoveryTimer = setTimeout(() => {
+          recoveryTimer    = null;
+          rateLimitedUntil = 0;
+          setRateLimitUI(0);  // restore "Connected" text
+          startPolling();     // re-establishes setInterval + immediate pollOnce
+        }, retryAfter * 1000 + 500);
+      }
 
       return null;
     }
@@ -940,23 +953,28 @@ let todayRefreshTimer = null;   // interval for auto-refresh while on today tab
 let allTodayData      = [];     // [{time:"HH:MM", ts:ms, bpm:number, steps:number}]
 let todayViewChart    = null;
 
-/** Switch between the Realtime view and the Today's Trend view. */
+/** Switch between the Realtime / Today's Trend / AI 分析 views. */
 function switchView(name) {
   currentView = name;
 
   document.querySelectorAll('.view-btn').forEach((btn, i) => {
     btn.classList.toggle('active', (i === 0 && name === 'realtime') ||
-                                   (i === 1 && name === 'today'));
+                                   (i === 1 && name === 'today') ||
+                                   (i === 2 && name === 'ai'));
   });
 
   document.getElementById('viewRealtime').style.display = name === 'realtime' ? '' : 'none';
   document.getElementById('viewToday').style.display    = name === 'today'    ? '' : 'none';
+  document.getElementById('viewAi').style.display       = name === 'ai'       ? '' : 'none';
 
   if (name === 'today') {
     loadTodayView();
-    // Auto-refresh the full-day chart every 3 minutes while this tab is open
     clearInterval(todayRefreshTimer);
     todayRefreshTimer = setInterval(loadTodayView, 3 * 60_000);
+  } else if (name === 'ai') {
+    clearInterval(todayRefreshTimer);
+    todayRefreshTimer = null;
+    loadAiView();
   } else {
     clearInterval(todayRefreshTimer);
     todayRefreshTimer = null;
@@ -1274,6 +1292,325 @@ function resetZoom(target) {
   }
 }
 
+
+// ─────────────────────────────────────────────────────────────
+// AI ANALYSIS VIEW
+// ─────────────────────────────────────────────────────────────
+
+/** Called when the AI tab is opened — loads data then populates stats. */
+async function loadAiView() {
+  if (allTodayData.length === 0) {
+    await loadTodayView();
+  }
+  populateAiStats();
+  const stats = computeTodayStats();
+  if (stats) saveDailyRecord(stats);
+  renderAiHistoryCard();
+  restoreTokenBar();
+}
+
+/** Compute summary statistics from today's full-day data. */
+function computeTodayStats() {
+  if (allTodayData.length === 0) return null;
+
+  const bpms        = allTodayData.map(p => p.bpm);
+  const avg         = Math.round(bpms.reduce((s, v) => s + v, 0) / bpms.length);
+  const max         = Math.max(...bpms);
+  const min         = Math.min(...bpms);
+  const range       = max - min;
+
+  // Walking HR: average BPM during minutes where steps > 3
+  const walkPts     = allTodayData.filter(p => (p.steps ?? 0) > 3);
+  const workout     = walkPts.length > 0
+    ? Math.round(walkPts.reduce((s, p) => s + p.bpm, 0) / walkPts.length)
+    : null;
+
+  // Recovery: HR drop 1 and 2 minutes after the peak
+  const peakIdx         = bpms.indexOf(max);
+  const recovery_1min   = peakIdx + 1 < bpms.length ? max - bpms[peakIdx + 1] : null;
+  const recovery_2min   = peakIdx + 2 < bpms.length ? max - bpms[peakIdx + 2] : null;
+
+  return { avg, max, rest: min, range, workout, recovery_1min, recovery_2min };
+}
+
+function populateAiStats() {
+  const stats = computeTodayStats();
+  if (!stats) return;
+  const fmt = v => (v != null ? v : '--');
+  document.getElementById('aiStatAvg').textContent     = fmt(stats.avg);
+  document.getElementById('aiStatMax').textContent     = fmt(stats.max);
+  document.getElementById('aiStatRest').textContent    = fmt(stats.rest);
+  document.getElementById('aiStatRange').textContent   = fmt(stats.range);
+  document.getElementById('aiStatWorkout').textContent = fmt(stats.workout);
+  document.getElementById('aiStatR1').textContent      = fmt(stats.recovery_1min);
+  document.getElementById('aiStatR2').textContent      = fmt(stats.recovery_2min);
+}
+
+async function runAiAnalysis() {
+  const apiKey = window.APP_CONFIG?.OPENAI_API_KEY;
+  if (!apiKey) {
+    const errEl = document.getElementById('aiError');
+    errEl.textContent = '⚠️ 请在 config.js 中设置 OPENAI_API_KEY（获取地址：platform.openai.com/api-keys）';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const stats = computeTodayStats();
+  if (!stats) {
+    showToast('暂无今日数据，请先切换到「Today Trend」加载数据', 'warn');
+    return;
+  }
+
+  const userCtx = document.getElementById('aiUserContext').value.trim();
+  const fmt     = v => (v != null ? `${v}` : '数据不足');
+  const historySummary = buildHistorySummary();
+
+  const prompt = `你是一个心脏健康分析助手，风格像理性教练：不吓人、不泛泛而谈、结论要考虑趋势。
+
+【今日数据】
+- 平均心率：${stats.avg} BPM
+- 最大心率：${stats.max} BPM
+- 静息心率（今日最低）：${stats.rest} BPM
+- 心率范围：${stats.range} BPM
+- 步行平均心率：${fmt(stats.workout)} BPM
+- 高峰后1分钟恢复：${fmt(stats.recovery_1min)} BPM ↓
+- 高峰后2分钟恢复：${fmt(stats.recovery_2min)} BPM ↓
+
+【近期趋势（近几天）】
+${historySummary}
+
+【用户背景】
+${userCtx}
+
+分析要求：
+1. 今日状态必须结合趋势判断，选项：改善中 / 稳定 / 偏高 / 恶化
+2. 如果数据在改善，risk 字段明确说"无需担心"，不要因为超过普通标准就警告
+3. 核心原因最多2个，优先考虑睡眠、压力、活动变化
+4. 建议要个性化：改善中则不过度干预，恶化才建议调整
+5. 总结必须体现趋势（例如"正在恢复中"）
+
+请严格以 JSON 格式输出，不要包含任何其他内容：
+{
+  "status": "改善中|稳定|偏高|恶化",
+  "trend": "变好|持平|变差",
+  "risk": "风险判断（改善中请明确说无需担心）",
+  "core_issue": "核心原因（最多2个，2-3句）",
+  "suggestions": ["建议1", "建议2", "建议3"],
+  "summary": "体现趋势的一句话总结"
+}`;
+
+  const btn   = document.getElementById('aiAnalyzeBtn');
+  const errEl = document.getElementById('aiError');
+
+  btn.disabled    = true;
+  btn.textContent = '分析中…';
+  document.getElementById('aiLoading').style.display        = 'block';
+  document.getElementById('aiResultSection').style.display  = 'none';
+  errEl.style.display = 'none';
+
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `HTTP ${res.status}`);
+    }
+
+    const data  = await res.json();
+    const text  = data.choices?.[0]?.message?.content ?? '';
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('无法解析 AI 响应格式');
+
+    const result = JSON.parse(match[0]);
+    renderAiResult(result);
+    saveAiHistory(stats, result);
+    renderAiHistoryCard();
+    updateTokenCost(data.usage);
+
+  } catch (e) {
+    logger.error('AI analysis failed', e);
+    errEl.textContent   = `分析失败：${e.message}`;
+    errEl.style.display = 'block';
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = '🤖 重新分析';
+    document.getElementById('aiLoading').style.display = 'none';
+  }
+}
+
+function renderAiResult(result) {
+  const statusColor = { '改善中': 'var(--green)', '稳定': 'var(--blue)', '偏高': 'var(--orange)', '恶化': 'var(--red)' };
+  const statusIcon  = { '改善中': '📈', '稳定': '✅', '偏高': '⚠️', '恶化': '🚨' };
+  const trendColor  = { '变好': 'var(--green)', '持平': 'var(--blue)', '变差': 'var(--red)' };
+  const trendIcon   = { '变好': '↗️', '持平': '➡️', '变差': '↘️' };
+
+  document.getElementById('aiResStatusIcon').textContent = statusIcon[result.status]  ?? '—';
+  document.getElementById('aiResStatus').textContent     = result.status              ?? '—';
+  document.getElementById('aiResStatus').style.color     = statusColor[result.status] ?? 'var(--muted)';
+
+  document.getElementById('aiResTrendIcon').textContent  = trendIcon[result.trend]   ?? '—';
+  document.getElementById('aiResTrend').textContent      = result.trend              ?? '—';
+  document.getElementById('aiResTrend').style.color      = trendColor[result.trend]  ?? 'var(--muted)';
+  document.getElementById('aiResRisk').textContent       = result.risk                ?? '—';
+  document.getElementById('aiResCoreIssue').textContent  = result.core_issue          ?? '—';
+
+  const ul = document.getElementById('aiResSuggestions');
+  ul.innerHTML = '';
+  (result.suggestions ?? []).forEach(s => {
+    const li = document.createElement('li');
+    li.textContent = s;
+    ul.appendChild(li);
+  });
+
+  document.getElementById('aiResSummary').textContent   = result.summary ?? '—';
+  document.getElementById('aiResultSection').style.display = 'block';
+  document.getElementById('aiResultSection').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ─── Daily History (3-day rolling, one entry per date) ──────
+const DAILY_HISTORY_KEY = 'fitbit_daily_history';
+const AI_HISTORY_KEY    = 'fitbit_ai_history';   // kept for legacy clear
+
+/**
+ * Save or update today's daily record.
+ * Keeps at most 3 days; oldest entry is dropped when a new date is added.
+ */
+function saveDailyRecord(stats) {
+  const today   = new Date().toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+  const records = JSON.parse(localStorage.getItem(DAILY_HISTORY_KEY) ?? '[]');
+
+  // Remove existing entry for today (will be replaced with fresher data)
+  const others  = records.filter(r => r.date !== today);
+
+  // Append today and keep only last 3 days
+  const updated = [...others, { date: today, ...stats }].slice(-3);
+  localStorage.setItem(DAILY_HISTORY_KEY, JSON.stringify(updated));
+}
+
+/** Build a plain-text trend summary from the 3-day daily history for the AI prompt. */
+function buildHistorySummary() {
+  const records = JSON.parse(localStorage.getItem(DAILY_HISTORY_KEY) ?? '[]');
+  if (records.length === 0) return '（暂无历史记录，这是首次分析）';
+
+  const lines = records.map(r =>
+    `- ${r.date}：均值 ${r.avg ?? '--'} BPM，静息 ${r.rest ?? '--'} BPM，2min恢复 ${r.recovery_2min != null ? '↓' + r.recovery_2min : '--'} BPM`
+  );
+
+  const avgs = records.map(r => r.avg).filter(Boolean);
+  let trendNote = '';
+  if (avgs.length >= 2) {
+    const delta = avgs[avgs.length - 1] - avgs[0];
+    trendNote = delta <= -3 ? '\n→ 均值心率持续下降，整体在改善'
+              : delta >= 3  ? '\n→ 均值心率持续上升，需关注'
+              :               '\n→ 均值心率基本持平';
+  }
+
+  return lines.join('\n') + trendNote;
+}
+
+function saveAiHistory(stats, result) {
+  // No-op: AI analysis results are not persisted separately anymore.
+  // Daily stats are saved automatically via saveDailyRecord in loadAiView.
+  void stats; void result;
+}
+
+function renderAiHistoryCard() {
+  const records = JSON.parse(localStorage.getItem(DAILY_HISTORY_KEY) ?? '[]');
+  const card    = document.getElementById('aiHistoryCard');
+  const list    = document.getElementById('aiHistoryList');
+  if (records.length === 0) { card.style.display = 'none'; return; }
+
+  card.style.display = '';
+  list.innerHTML = '';
+
+  // Show records oldest → newest with a small trend arrow between them
+  records.forEach((r, i) => {
+    const prev      = records[i - 1];
+    const delta     = prev ? r.avg - prev.avg : null;
+    const arrow     = delta == null ? '' : delta < 0 ? ' ↓' : delta > 0 ? ' ↑' : ' →';
+    const arrowClr  = delta == null ? '' : delta < 0 ? 'var(--green)' : delta > 0 ? 'var(--red)' : 'var(--muted)';
+    const isToday   = r.date === new Date().toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+
+    const row = document.createElement('div');
+    row.className = 'ai-history-row';
+    row.innerHTML = `
+      <span class="ai-hist-date">${r.date}${isToday ? '（今日）' : ''}</span>
+      <span class="ai-hist-avg">均值 <b>${r.avg ?? '--'}</b> BPM<span style="color:${arrowClr}">${arrow}</span></span>
+      <span class="ai-hist-avg" style="color:var(--green)">静息 ${r.rest ?? '--'} BPM</span>
+      <span class="ai-hist-avg" style="color:var(--teal)">恢复 ${r.recovery_2min != null ? '↓' + r.recovery_2min : '--'}</span>
+    `;
+    list.appendChild(row);
+  });
+}
+
+function clearAllHistory() {
+  localStorage.removeItem(DAILY_HISTORY_KEY);
+  localStorage.removeItem(AI_HISTORY_KEY);
+  renderAiHistoryCard();
+  showToast('历史记录已清空', 'info');
+}
+
+// ─────────────────────────────────────────────────────────────
+// TOKEN COST TRACKER  (gpt-4o-mini pricing, USD)
+// ─────────────────────────────────────────────────────────────
+const TOKEN_COST_KEY = 'fitbit_token_cost_usd';
+
+// gpt-4o-mini: $0.150 / 1M input tokens, $0.600 / 1M output tokens
+const PRICE_INPUT  = 0.150 / 1_000_000;
+const PRICE_OUTPUT = 0.600 / 1_000_000;
+
+function calcCost(usage) {
+  if (!usage) return 0;
+  return usage.prompt_tokens * PRICE_INPUT + usage.completion_tokens * PRICE_OUTPUT;
+}
+
+function fmtUSD(usd) {
+  if (usd < 0.001) return `$${(usd * 1000).toFixed(4)}m`;   // show in milli-dollars
+  return `$${usd.toFixed(4)}`;
+}
+
+function updateTokenCost(usage) {
+  if (!usage) return;
+
+  const thisCost  = calcCost(usage);
+  const prevTotal = parseFloat(localStorage.getItem(TOKEN_COST_KEY) ?? '0');
+  const newTotal  = prevTotal + thisCost;
+  localStorage.setItem(TOKEN_COST_KEY, String(newTotal));
+
+  const bar = document.getElementById('aiTokenBar');
+  bar.style.display = '';
+  document.getElementById('aiTokenThisCall').textContent = fmtUSD(thisCost);
+  document.getElementById('aiTokenTotal').textContent    = fmtUSD(newTotal);
+  document.getElementById('aiTokenDetail').textContent   =
+    `↑${usage.prompt_tokens} / ↓${usage.completion_tokens} tokens`;
+}
+
+function resetTokenCost() {
+  localStorage.removeItem(TOKEN_COST_KEY);
+  document.getElementById('aiTokenTotal').textContent = '$0.0000';
+  showToast('累计费用已清零', 'info');
+}
+
+function restoreTokenBar() {
+  const total = parseFloat(localStorage.getItem(TOKEN_COST_KEY) ?? '0');
+  if (total === 0) return;
+  const bar = document.getElementById('aiTokenBar');
+  bar.style.display = '';
+  document.getElementById('aiTokenThisCall').textContent = '—';
+  document.getElementById('aiTokenTotal').textContent    = fmtUSD(total);
+  document.getElementById('aiTokenDetail').textContent   = '（历史累计）';
+}
 
 // ─────────────────────────────────────────────────────────────
 // BOOT

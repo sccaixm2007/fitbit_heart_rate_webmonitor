@@ -15,6 +15,7 @@ window.APP_CONFIG = {
   //
   // Common values:
   //   VS Code Live Server (default port 5500): 'http://127.0.0.1:5500/'
+  //   npm run dev (live-server on port 5500):  'http://127.0.0.1:5500/'
   //   Other local servers: 'http://localhost:PORT/'
   REDIRECT_URI: 'http://127.0.0.1:5500/',
 
@@ -22,4 +23,16 @@ window.APP_CONFIG = {
   // Options: 'debug' | 'info' | 'warn' | 'error'
   // Use 'debug' during development, 'warn' for normal use.
   LOG_LEVEL: 'warn',
+
+  // OpenAI API key — powers the AI 分析 tab.
+  // Get yours at: https://platform.openai.com/api-keys
+  // Leave empty ('') to disable AI analysis.
+  OPENAI_API_KEY: '',
+
+  // Total OpenAI credit budget (USD).
+  OPENAI_BUDGET: 100,
+
+  // Spend already incurred OUTSIDE this app.
+  // e.g. OpenAI shows $1.03 remaining from $100 → enter 100 - 1.03 = 98.97
+  OPENAI_SPENT_OFFSET: 0,
 };
