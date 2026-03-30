@@ -1,8 +1,8 @@
 # Fitbit Smart HR Monitor
 
-A browser-based heart rate monitoring dashboard powered by the Fitbit API. Monitors your heart rate in real-time, detects whether you are resting or walking, fires smart alerts when your heart rate stays elevated too long, and reminds you to get up after extended sitting periods.
+A browser-based heart rate monitoring dashboard powered by the Fitbit API. Monitors your heart rate in real-time, detects whether you are resting or walking, fires smart alerts when your heart rate stays elevated too long, reminds you to get up after extended sitting periods, and provides AI-powered daily health analysis via GPT-4o-mini.
 
-No server, no build step, no npm. Open `index.html` with VS Code Live Server and it works.
+No server, no build step. Open `index.html` with VS Code Live Server and it works.
 
 ---
 
@@ -17,9 +17,13 @@ No server, no build step, no npm. Open `index.html` with VS Code Live Server and
 | **Sound alerts** | Synthesized beeps via Web Audio API — no audio files needed |
 | **Browser notifications** | Native OS notifications for HR and sedentary alerts |
 | **Today's Trend view** | Full-day HR + steps chart (00:00 → now) with avg / max / min stats |
+| **AI 分析 tab** | GPT-4o-mini powered daily analysis: today's status, trend direction, risk assessment, root cause, and personalised suggestions |
+| **Personal context file** | `personal.json` (local-only, gitignored) pre-fills the AI user background textarea on every page load |
+| **3-day rolling history** | AI analysis results are saved locally and fed back into the next analysis for trend-aware conclusions |
+| **Token cost tracker** | Shows per-call and cumulative OpenAI spend in USD with a one-click reset |
 | **Zoomable charts** | Scroll to zoom, drag to pan; shows selection statistics |
 | **Token lifecycle** | 24-hour OAuth token with expiry countdown and in-dashboard reconnect banner |
-| **Rate limit handling** | Respects Fitbit's 150 calls/hour limit; shows countdown on 429 |
+| **Rate limit handling** | Respects Fitbit's 150 calls/hour limit; shows countdown on 429 and auto-retries without infinite loops |
 | **Configurable thresholds** | All alert thresholds and timing adjustable in the Settings panel |
 
 ---
@@ -29,6 +33,7 @@ No server, no build step, no npm. Open `index.html` with VS Code Live Server and
 - A **Fitbit account** with a compatible heart-rate-tracking device
 - A **Fitbit Developer app** registered at [dev.fitbit.com](https://dev.fitbit.com/apps/new)
 - **VS Code** with the [Live Server extension](https://marketplace.visualstudio.com/items?itemName=ritwickdey.LiveServer) (or any local static file server on port 5500)
+- *(Optional)* An **OpenAI API key** for the AI 分析 tab — get one at [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
 
 ---
 
@@ -48,25 +53,44 @@ No server, no build step, no npm. Open `index.html` with VS Code Live Server and
 ### 2. Clone and configure
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/joyce_fitbitweb.git
-cd joyce_fitbitweb
+git clone https://github.com/sccaixm2007/fitbit_heart_rate_webmonitor.git
+cd fitbit_heart_rate_webmonitor
 
 # Copy the example config and edit it
 cp config.example.js config.js
 ```
 
-Edit `config.js` to set your redirect URI (must match your Fitbit app's Callback URL):
+Edit `config.js`:
 
 ```js
 window.APP_CONFIG = {
   REDIRECT_URI: 'http://127.0.0.1:5500/',
   LOG_LEVEL: 'warn',
+
+  // Optional — leave empty ('') to disable AI analysis
+  OPENAI_API_KEY: 'sk-...',
+  OPENAI_BUDGET: 100,
+  OPENAI_SPENT_OFFSET: 0,
 };
 ```
 
 > `config.js` is in `.gitignore` and will never be committed.
 
-### 3. Run
+### 3. (Optional) Set up your personal AI context
+
+```bash
+cp personal.example.json personal.json
+```
+
+Edit `personal.json` with your own health background (age, baseline HR, known conditions, etc.). This file is loaded automatically on every page load and pre-fills the AI user context textarea. It is in `.gitignore` and will never be committed.
+
+```json
+{
+  "context": "35岁，长期久坐，静息HR 70–80 BPM，无慢性病。"
+}
+```
+
+### 4. Run
 
 Open the project folder in VS Code and click **Go Live** in the bottom status bar.
 
@@ -77,13 +101,16 @@ The app opens at `http://127.0.0.1:5500/`. Enter your **Client ID** and click **
 ## Project Structure
 
 ```
-joyce_fitbitweb/
-├── index.html          # App shell — HTML markup only
+fitbit_heart_rate_webmonitor/
+├── index.html              # App shell — HTML markup only
 ├── src/
-│   ├── style.css       # All styles
-│   └── app.js          # All application logic
-├── config.js           # Your local config (gitignored — never commit)
-├── config.example.js   # Template — copy to config.js and customize
+│   ├── style.css           # All styles
+│   └── app.js              # All application logic
+├── config.js               # Your local config (gitignored — never commit)
+├── config.example.js       # Template — copy to config.js and customize
+├── personal.json           # Your private AI context (gitignored — never commit)
+├── personal.example.json   # Template — copy to personal.json and customize
+├── package.json            # Optional: npm run dev for live-server
 ├── .gitignore
 └── README.md
 ```
@@ -96,10 +123,34 @@ joyce_fitbitweb/
 
 | Key | Default | Description |
 |---|---|---|
-| `REDIRECT_URI` | `http://127.0.0.1:5500/` | Must exactly match your Fitbit app's registered Callback URL |
+| `REDIRECT_URI` | `'http://127.0.0.1:5500/'` | Must exactly match your Fitbit app's registered Callback URL |
 | `LOG_LEVEL` | `'warn'` | Console verbosity: `'debug'` / `'info'` / `'warn'` / `'error'` |
+| `OPENAI_API_KEY` | `''` | OpenAI API key; leave empty to disable AI analysis |
+| `OPENAI_BUDGET` | `100` | Your total OpenAI credit budget in USD (for cost tracking display) |
+| `OPENAI_SPENT_OFFSET` | `0` | Spend already incurred outside this app (subtracted from budget display) |
 
-Alert thresholds and timing can be adjusted live in the **Settings** panel inside the dashboard — no code changes needed.
+Alert thresholds and timing can be adjusted live in the **Settings** panel — no code changes needed.
+
+---
+
+## AI 分析 Tab
+
+The AI tab uses GPT-4o-mini to analyse your Fitbit data and produce a structured daily health report.
+
+**Output fields:**
+
+| Field | Description |
+|---|---|
+| 今日状态 | Overall status: 改善中 / 稳定 / 偏高 / 恶化 |
+| 趋势判断 | Direction vs recent days: 变好 / 持平 / 变差 |
+| 风险判断 | Risk assessment — explicitly says "无需担心" when trend is improving |
+| 核心原因 | Up to 2 root causes (sleep, stress, activity changes) |
+| 明日建议 | Personalised action items based on current trend |
+| 总结 | One-sentence summary that reflects the trend |
+
+**3-day rolling history** — each analysis is saved to `localStorage`. The next analysis receives the past 3 days as context so conclusions reflect trends rather than single-day snapshots.
+
+**Personal context (`personal.json`)** — edit this file to tell the AI your baseline (typical resting HR, known conditions, etc.). Changes take effect on the next page reload.
 
 ---
 
@@ -123,7 +174,7 @@ GET /1/user/-/activities/heart/date/today/1d/1min.json
 GET /1/user/-/activities/steps/date/today/1d/1min.json
 ```
 
-This uses **120 calls/hour** — within Fitbit's 150-call-per-hour limit. HTTP 429 responses are handled automatically with a visible countdown and auto-retry.
+This uses **120 calls/hour** — within Fitbit's 150-call-per-hour limit. HTTP 429 responses are handled automatically: polling stops, a visible countdown runs, and polling restarts cleanly after the window expires.
 
 ---
 
@@ -135,6 +186,7 @@ This uses **120 calls/hour** — within Fitbit's 150-call-per-hour limit. HTTP 4
 - **Hammer.js 2.0** — touch support for chart interactions
 - **Web Audio API** — synthesized beep alerts (no audio files)
 - **Fitbit OAuth 2.0 Implicit Flow** — browser-only authentication
+- **OpenAI API (gpt-4o-mini)** — AI daily health analysis
 
 ---
 
@@ -151,6 +203,12 @@ The header shows a countdown. The app retries automatically after the window exp
 
 **Token expired**
 A red banner appears on the dashboard. Click **Reconnect Fitbit** for one-click re-auth using your saved Client ID.
+
+**AI analysis button does nothing / shows error**
+Check that `OPENAI_API_KEY` is set in `config.js` and that the key has available credits. The AI tab also requires at least one day of Fitbit data — open **Today's Trend** first if the AI tab shows no stats.
+
+**Personal context not loading**
+Make sure `personal.json` exists in the project root and contains valid JSON with a `"context"` key. The file must be served by the same local server (Live Server) — opening `index.html` directly as a `file://` URL will block the fetch.
 
 ---
 
