@@ -17,7 +17,7 @@ No server, no build step. Open `index.html` with VS Code Live Server and it work
 | **Sound alerts** | Synthesized beeps via Web Audio API — no audio files needed |
 | **Browser notifications** | Native OS notifications for HR and sedentary alerts |
 | **Today's Trend view** | Full-day HR + steps chart (00:00 → now) with avg / max / min stats |
-| **AI 分析 tab** | GPT-4o-mini powered daily analysis: today's status, trend direction, risk assessment, root cause, and personalised suggestions |
+| **AI Analysis tab** | GPT-4o-mini powered daily analysis: today's status, trend direction, risk assessment, root cause, and personalised suggestions |
 | **Personal context file** | `personal.json` (local-only, gitignored) pre-fills the AI user background textarea on every page load |
 | **3-day rolling history** | AI analysis results are saved locally and fed back into the next analysis for trend-aware conclusions |
 | **Token cost tracker** | Shows per-call and cumulative OpenAI spend in USD with a one-click reset |
@@ -33,7 +33,7 @@ No server, no build step. Open `index.html` with VS Code Live Server and it work
 - A **Fitbit account** with a compatible heart-rate-tracking device
 - A **Fitbit Developer app** registered at [dev.fitbit.com](https://dev.fitbit.com/apps/new)
 - **VS Code** with the [Live Server extension](https://marketplace.visualstudio.com/items?itemName=ritwickdey.LiveServer) (or any local static file server on port 5500)
-- *(Optional)* An **OpenAI API key** for the AI 分析 tab — get one at [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+- *(Optional)* An **OpenAI API key** for the AI Analysis tab — get one at [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
 
 ---
 
@@ -86,7 +86,7 @@ Edit `personal.json` with your own health background (age, baseline HR, known co
 
 ```json
 {
-  "context": "35岁，长期久坐，静息HR 70–80 BPM，无慢性病。"
+  "context": "Age 35. Sedentary lifestyle. Resting HR 70–80 BPM. No chronic conditions."
 }
 ```
 
@@ -133,24 +133,24 @@ Alert thresholds and timing can be adjusted live in the **Settings** panel — n
 
 ---
 
-## AI 分析 Tab
+## AI Analysis Tab
 
-The AI tab uses GPT-4o-mini to analyse your Fitbit data and produce a structured daily health report.
+The AI Analysis tab uses GPT-4o-mini to analyse your Fitbit data and produce a structured daily health report.
 
 **Output fields:**
 
 | Field | Description |
 |---|---|
-| 今日状态 | Overall status: 改善中 / 稳定 / 偏高 / 恶化 |
-| 趋势判断 | Direction vs recent days: 变好 / 持平 / 变差 |
-| 风险判断 | Risk assessment — explicitly says "无需担心" when trend is improving |
-| 核心原因 | Up to 2 root causes (sleep, stress, activity changes) |
-| 明日建议 | Personalised action items based on current trend |
-| 总结 | One-sentence summary that reflects the trend |
+| Today's Status | Overall assessment: Improving / Stable / Elevated / Worsening |
+| Trend | Direction vs recent days: Getting better / Holding steady / Getting worse |
+| Risk Assessment | Risk level — explicitly confirms "no concern" when trend is improving |
+| Root Cause | Up to 2 contributing factors (e.g. poor sleep, stress, reduced activity) |
+| Suggestions | Personalised action items based on current trend |
+| Summary | One-sentence conclusion that reflects the overall trend |
 
 **3-day rolling history** — each analysis is saved to `localStorage`. The next analysis receives the past 3 days as context so conclusions reflect trends rather than single-day snapshots.
 
-**Personal context (`personal.json`)** — edit this file to tell the AI your baseline (typical resting HR, known conditions, etc.). Changes take effect on the next page reload.
+**Personal context (`personal.json`)** — edit this file to tell the AI your baseline (typical resting HR, known conditions, lifestyle, etc.). Changes take effect on the next page reload.
 
 ---
 
