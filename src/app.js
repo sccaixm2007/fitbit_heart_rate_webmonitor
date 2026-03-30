@@ -118,6 +118,7 @@ function startDashboard() {
   initTodayChart();
   maybeShowNotifBanner();
   updateTokenInfo();
+  loadPersonalContext();
   fetchAndSeedHistory().then(startPolling);
 }
 
@@ -1296,6 +1297,24 @@ function resetZoom(target) {
 // ─────────────────────────────────────────────────────────────
 // AI ANALYSIS VIEW
 // ─────────────────────────────────────────────────────────────
+
+/**
+ * Load personal.json (local-only, never committed) and pre-fill the user
+ * context textarea.  Falls back silently if the file doesn't exist.
+ */
+async function loadPersonalContext() {
+  try {
+    const res = await fetch('personal.json');
+    if (!res.ok) return;           // file not found — keep placeholder text
+    const data = await res.json();
+    if (data?.context) {
+      document.getElementById('aiUserContext').value = data.context;
+    }
+  } catch (e) {
+    // Network / parse error — ignore, user can type manually
+    logger.debug('personal.json not loaded:', e.message);
+  }
+}
 
 /** Called when the AI tab is opened — loads data then populates stats. */
 async function loadAiView() {

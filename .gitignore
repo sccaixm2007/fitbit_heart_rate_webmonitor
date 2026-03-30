@@ -2,6 +2,9 @@
 # Local config (contains your redirect URI — never commit this)
 config.js
 
+# Personal health background — copy personal.example.json → personal.json to use
+personal.json
+
 # ── Logs ──────────────────────────────────────────────────────
 logs
 *.log
